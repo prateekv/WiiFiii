@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WiiFiii — Live Network Scanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #080b14;
+      --bg2:        #0d1220;
+      --surface:    rgba(255,255,255,0.04);
+      --border:     rgba(255,255,255,0.08);
+      --border-hi:  rgba(99,179,237,0.35);
+      --text:       #e2e8f0;
+      --muted:      #64748b;
+      --blue:       #60a5fa;
+      --purple:     #a78bfa;
+      --green:      #34d399;
+      --amber:      #fbbf24;
+      --red:        #f87171;
+      --mono:       'JetBrains Mono', monospace;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .app {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      min-height: 100vh;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem;
+      gap: 1.25rem;
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .75rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+    }
+
+    .brand-logo {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      border-radius: 10px;
+      display: grid; place-items: center;
+      font-size: 18px;
+      box-shadow: 0 0 18px rgba(99,149,237,.3);
+    }
+
+    .brand-name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -.02em;
+    }
+
+    .brand-sub {
+      font-size: .7rem;
+      color: var(--muted);
+      margin-top: .05rem;
+    }
+
+    /* ── Status badges ────────────────────────────────────────── */
+    .badges { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+
+    .badge {
+      display: flex; align-items: center; gap: .4rem;
+      padding: .3rem .75rem;
+      border-radius: 9999px;
+      font-size: .75rem; font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      transition: all .3s;
+    }
+
+    .badge.ws--connected   { border-color: rgba(52,211,153,.4); color: var(--green); }
+    .badge.ws--connecting  { border-color: rgba(251,191,36,.4);  color: var(--amber); }
+    .badge.ws--error       { border-color: rgba(248,113,113,.4); color: var(--red); }
+
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 6px currentColor;
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Network info bar ─────────────────────────────────────── */
+    .net-bar {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .net-item { display: flex; flex-direction: column; gap: .15rem; }
+
+    .net-label {
+      font-size: .65rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+    }
+
+    .net-value {
+      font-family: var(--mono);
+      font-size: .85rem;
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .net-value.ssid {
+      font-family: 'Inter', sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--blue);
+    }
+
+    .signal-bar {
+      display: flex; align-items: center; gap: .5rem;
+    }
+
+    .signal-dots { display: flex; gap: 3px; align-items: flex-end; }
+
+    .signal-dot {
+      width: 5px; border-radius: 2px;
+      background: var(--border);
+      transition: background .4s;
+    }
+
+    .signal-dot.active { background: var(--green); }
+    .signal-dot:nth-child(1) { height: 6px; }
+    .signal-dot:nth-child(2) { height: 10px; }
+    .signal-dot:nth-child(3) { height: 14px; }
+    .signal-dot:nth-child(4) { height: 18px; }
+
+    /* ── Toolbar ──────────────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .75rem;
+    }
+
+    .toolbar-left { display: flex; align-items: center; gap: .75rem; }
+
+    .device-count {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--blue);
+      line-height: 1;
+    }
+
+    .device-count-label {
+      font-size: .75rem;
+      color: var(--muted);
+    }
+
+    .scan-info {
+      font-size: .75rem;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    .scan-info span { color: var(--text); }
+
+    /* ── Device grid ──────────────────────────────────────────── */
+    .devices-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: .75rem;
+      align-content: start;
+    }
+
+    /* ── Device card ──────────────────────────────────────────── */
+    .device-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .6rem;
+      transition: border-color .3s, transform .2s, box-shadow .3s;
+      animation: card-in .35s cubic-bezier(.22,1,.36,1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .device-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(99,149,237,.04), transparent 60%);
+      pointer-events: none;
+    }
+
+    .device-card:hover {
+      border-color: var(--border-hi);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+
+    .device-card.is-new {
+      border-color: rgba(52,211,153,.5);
+      animation: card-in .35s cubic-bezier(.22,1,.36,1), new-glow 2s ease-out 0s 1;
+    }
+
+    .device-card.is-gateway {
+      border-color: rgba(251,191,36,.3);
+    }
+
+    .device-card.is-self {
+      border-color: rgba(167,139,250,.4);
+    }
+
+    @keyframes card-in {
+      from { opacity: 0; transform: translateY(8px) scale(.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes new-glow {
+      0%   { box-shadow: 0 0 0 0 rgba(52,211,153,.5); }
+      50%  { box-shadow: 0 0 20px 4px rgba(52,211,153,.2); }
+      100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+    }
+
+    /* Card elements */
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: .5rem;
+    }
+
+    .device-icon {
+      width: 34px; height: 34px;
+      border-radius: 9px;
+      display: grid; place-items: center;
+      font-size: 16px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    .device-icon.router   { background: rgba(251,191,36,.15); }
+    .device-icon.self     { background: rgba(167,139,250,.15); }
+    .device-icon.phone    { background: rgba(99,179,237,.12); }
+    .device-icon.computer { background: rgba(52,211,153,.12); }
+    .device-icon.unknown  { background: rgba(100,116,139,.12); }
+
+    .device-tag {
+      font-size: .6rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: .15rem .45rem;
+      border-radius: 9999px;
+    }
+
+    .device-tag.gateway { background: rgba(251,191,36,.15); color: var(--amber); }
+    .device-tag.self    { background: rgba(167,139,250,.15); color: var(--purple); }
+    .device-tag.new     { background: rgba(52,211,153,.15);  color: var(--green); }
+
+    .device-hostname {
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-word;
+      flex: 1;
+    }
+
+    .device-hostname.unknown-host { color: var(--muted); font-weight: 400; }
+
+    .card-meta {
+      display: flex;
+      flex-direction: column;
+      gap: .25rem;
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .meta-key {
+      font-size: .65rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      width: 28px;
+      flex-shrink: 0;
+    }
+
+    .meta-val {
+      font-family: var(--mono);
+      font-size: .78rem;
+      color: var(--text);
+    }
+
+    .meta-val.ip   { color: var(--blue); }
+    .meta-val.mac  { color: var(--muted); font-size: .72rem; }
+
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: .15rem;
+      padding-top: .5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .seen-ago {
+      font-size: .68rem;
+      color: var(--muted);
+    }
+
+    /* ── Empty state ──────────────────────────────────────────── */
+    .empty-state {
+      grid-column: 1/-1;
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--muted);
+    }
+
+    .empty-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .empty-title { font-size: 1.1rem; color: var(--text); margin-bottom: .5rem; }
+
+    /* ── Footer ───────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding-top: .75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .5rem;
+      font-size: .72rem;
+      color: var(--muted);
+    }
+
+    footer .mono { font-family: var(--mono); }
+
+    /* ── Scroll ───────────────────────────────────────────────── */
+    .devices-section { overflow-y: auto; }
+
+    /* ── Spinner for first load ───────────────────────────────── */
+    .spinner-wrap {
+      grid-column: 1/-1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 4rem;
+      color: var(--muted);
+    }
+
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">📡</div>
+      <div>
+        <div class="brand-name">WiiFiii</div>
+        <div class="brand-sub">Live Network Scanner</div>
+      </div>
+    </div>
+    <div class="badges">
+      <div class="badge ws--connecting" id="ws-badge">
+        <span class="dot"></span>
+        <span id="ws-label">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Network info bar -->
+  <div class="net-bar" id="net-bar">
+    <div class="net-item">
+      <span class="net-label">Network</span>
+      <span class="net-value ssid" id="net-ssid">—</span>
+    </div>
+    <div class="net-item">
+      <span class="net-label">Gateway</span>
+      <span class="net-value" id="net-gateway">—</span>
+    </div>
+    <div class="net-item">
+      <span class="net-label">Your IP</span>
+      <span class="net-value" id="net-localip">—</span>
+    </div>
+    <div class="net-item">
+      <span class="net-label">Subnet</span>
+      <span class="net-value" id="net-subnet">—</span>
+    </div>
+    <div class="net-item">
+      <span class="net-label">Signal</span>
+      <div class="signal-bar">
+        <div class="signal-dots" id="signal-dots">
+          <div class="signal-dot" id="sig1"></div>
+          <div class="signal-dot" id="sig2"></div>
+          <div class="signal-dot" id="sig3"></div>
+          <div class="signal-dot" id="sig4"></div>
+        </div>
+        <span class="net-value" id="net-signal">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <div>
+        <div class="device-count" id="device-count">—</div>
+        <div class="device-count-label">devices online</div>
+      </div>
+      <div class="scan-info" id="scan-info">
+        Scan #<span id="scan-num">0</span> &nbsp;·&nbsp;
+        <span id="scan-ms">—</span>ms &nbsp;·&nbsp;
+        next in <span id="next-in">…</span>s
+      </div>
+    </div>
+    <div class="scan-info" id="last-update-label">Last update: —</div>
+  </div>
+
+  <!-- Device grid -->
+  <section class="devices-section">
+    <div class="devices-grid" id="devices-grid">
+      <div class="spinner-wrap">
+        <div class="spinner"></div>
+        <span>Running first scan…</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <span>WiiFiii · <span class="mono">device_server.py</span></span>
+    <span id="footer-time" class="mono">—</span>
+  </footer>
+
+</div>
+
+<script>
+// ── Config ─────────────────────────────────────────────────────────────────
+const WS_URL = `ws://${location.host}/ws`;
+const SCAN_INTERVAL = 8; // should match server --interval
+
+// ── State ──────────────────────────────────────────────────────────────────
+let lastScanAt = null;
+let scanCount = 0;
+let localIp = null;
+let gatewayIp = null;
+let prevDeviceIPs = new Set();
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connect() {
+  const ws = new WebSocket(WS_URL);
+  const badge = document.getElementById('ws-badge');
+  const label = document.getElementById('ws-label');
+
+  ws.onopen = () => {
+    badge.className = 'badge ws--connected';
+    label.textContent = 'Live';
+  };
+
+  ws.onclose = () => {
+    badge.className = 'badge ws--connecting';
+    label.textContent = 'Reconnecting…';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'update') handleUpdate(data);
+  };
+}
+
+// ── Update handler ─────────────────────────────────────────────────────────
+function handleUpdate(data) {
+  const { network, devices, last_scan_at, scan_duration_ms, scan_count } = data;
+
+  // Network info
+  localIp = network.local_ip;
+  gatewayIp = network.gateway_ip;
+
+  document.getElementById('net-ssid').textContent     = network.ssid || '—';
+  document.getElementById('net-gateway').textContent  = network.gateway_ip || '—';
+  document.getElementById('net-localip').textContent  = network.local_ip || '—';
+  document.getElementById('net-subnet').textContent   = network.subnet_cidr || '—';
+
+  // Signal strength bars
+  const pctStr = network.signal_pct || '';
+  const pct = parseInt(pctStr) || 0;
+  document.getElementById('net-signal').textContent = pctStr || '—';
+  const bars = Math.ceil((pct / 100) * 4);
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById(`sig${i}`).classList.toggle('active', i <= bars);
+  }
+
+  // Scan stats
+  lastScanAt = last_scan_at;
+  scanCount = scan_count;
+  document.getElementById('device-count').textContent = devices.length;
+  document.getElementById('scan-num').textContent     = scan_count;
+  document.getElementById('scan-ms').textContent      = Math.round(scan_duration_ms);
+  document.getElementById('last-update-label').textContent =
+    `Last scan: ${new Date(last_scan_at * 1000).toLocaleTimeString()}`;
+
+  // Render device cards
+  renderDevices(devices);
+  prevDeviceIPs = new Set(devices.map(d => d.ip));
+}
+
+// ── Device renderer ────────────────────────────────────────────────────────
+function renderDevices(devices) {
+  const grid = document.getElementById('devices-grid');
+
+  if (devices.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">No devices found</div>
+        <div>Scanning ${document.getElementById('net-subnet').textContent}…</div>
+      </div>`;
+    return;
+  }
+
+  // Sort: gateway first, self second, then by IP
+  const sorted = [...devices].sort((a, b) => {
+    const aGw = a.ip === gatewayIp;
+    const bGw = b.ip === gatewayIp;
+    const aSelf = a.ip === localIp;
+    const bSelf = b.ip === localIp;
+    if (aGw && !bGw) return -1;
+    if (!aGw && bGw) return 1;
+    if (aSelf && !bSelf) return -1;
+    if (!aSelf && bSelf) return 1;
+    return ipNum(a.ip) - ipNum(b.ip);
+  });
+
+  grid.innerHTML = sorted.map(d => deviceCard(d)).join('');
+}
+
+function ipNum(ip) {
+  return ip.split('.').reduce((acc, o) => acc * 256 + parseInt(o), 0);
+}
+
+function deviceCard(d) {
+  const isGateway = d.ip === gatewayIp;
+  const isSelf    = d.ip === localIp;
+  const isNew     = !prevDeviceIPs.has(d.ip) && prevDeviceIPs.size > 0;
+
+  const classes = ['device-card',
+    isGateway ? 'is-gateway' : '',
+    isSelf    ? 'is-self'    : '',
+    isNew     ? 'is-new'     : '',
+  ].filter(Boolean).join(' ');
+
+  const icon = isGateway ? '🌐' : isSelf ? '💻' : guessIcon(d.hostname, d.mac);
+  const iconClass = isGateway ? 'router' : isSelf ? 'self' : guessIconClass(d.hostname, d.mac);
+  const displayName = d.hostname && d.hostname !== d.ip ? d.hostname : d.ip;
+  const unknownClass = (!d.hostname || d.hostname === d.ip) ? 'unknown-host' : '';
+
+  const tag = isGateway ? `<span class="device-tag gateway">Router</span>`
+            : isSelf    ? `<span class="device-tag self">This device</span>`
+            : isNew     ? `<span class="device-tag new">New</span>`
+            : '';
+
+  const sinceText = seenAgo(d.first_seen);
+
+  return `
+<div class="${classes}">
+  <div class="card-header">
+    <div class="device-icon ${iconClass}">${icon}</div>
+    <div class="device-hostname ${unknownClass}" title="${d.hostname}">${displayName}</div>
+    ${tag}
+  </div>
+  <div class="card-meta">
+    <div class="meta-row">
+      <span class="meta-key">IP</span>
+      <span class="meta-val ip">${d.ip}</span>
+    </div>
+    <div class="meta-row">
+      <span class="meta-key">MAC</span>
+      <span class="meta-val mac">${d.mac}</span>
+    </div>
+  </div>
+  <div class="card-footer">
+    <span class="seen-ago">Seen ${sinceText}</span>
+  </div>
+</div>`;
+}
+
+function seenAgo(ts) {
+  const secs = Math.floor(Date.now() / 1000 - ts);
+  if (secs < 5)   return 'just now';
+  if (secs < 60)  return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+  return `${Math.floor(secs/3600)}h ago`;
+}
+
+function guessIcon(hostname, mac) {
+  const h = (hostname || '').toLowerCase();
+  if (/iphone|ipad/.test(h))             return '📱';
+  if (/android|pixel|galaxy/.test(h))    return '📱';
+  if (/macbook|mac|imac/.test(h))        return '💻';
+  if (/windows|desktop|pc/.test(h))      return '🖥️';
+  if (/tv|chromecast|roku|fire/.test(h)) return '📺';
+  if (/printer/.test(h))                 return '🖨️';
+  if (/nest|ring|camera/.test(h))        return '📷';
+  if (/echo|alexa|dot/.test(h))          return '🔊';
+  return '📟';
+}
+
+function guessIconClass(hostname, mac) {
+  const h = (hostname || '').toLowerCase();
+  if (/iphone|ipad|android|pixel|galaxy/.test(h)) return 'phone';
+  if (/macbook|mac|imac|windows|desktop/.test(h))  return 'computer';
+  return 'unknown';
+}
+
+// ── Countdown timer ────────────────────────────────────────────────────────
+function tickCountdown() {
+  const el = document.getElementById('next-in');
+  const timeEl = document.getElementById('footer-time');
+  timeEl.textContent = new Date().toLocaleTimeString();
+
+  if (lastScanAt) {
+    const elapsed = Date.now() / 1000 - lastScanAt;
+    const remaining = Math.max(0, SCAN_INTERVAL - elapsed);
+    el.textContent = remaining.toFixed(0);
+  }
+}
+
+setInterval(tickCountdown, 500);
+
+// ── Start ──────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>
