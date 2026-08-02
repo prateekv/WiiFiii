@@ -39,3 +39,34 @@ async def start_udp_server(csi_nodes_state: Dict[str, dict]):
         local_addr=("0.0.0.0", 5005)
     )
     return transport
+
+async def main():
+    """Standalone test mode for Step 3: Just read and print raw CSI data to the terminal."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    print("==================================================")
+    print(" STEP 3: LIVE CSI STREAM READER (Terminal Output) ")
+    print("==================================================")
+    
+    test_state = {}
+    transport = await start_udp_server(test_state)
+    
+    try:
+        while True:
+            await asyncio.sleep(1)
+            # Print whatever is in the state dict
+            if test_state:
+                print("\n--- Live Raw CSI Data ---")
+                for node_id, data in test_state.items():
+                    print(f"Node: {node_id} | MAC: {data.get('mac')} | RSSI: {data.get('rssi')} | Payload Preview: {data.get('payload_preview')}")
+            else:
+                print("Waiting for ESP32 UDP packets on port 5005...")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        transport.close()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nStopped by user.")

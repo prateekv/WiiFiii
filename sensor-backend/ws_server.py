@@ -1,8 +1,9 @@
 """
 sensor-backend/ws_server.py
 ───────────────────────────
-Standalone WebSocket Server for Live Device Scanning.
-Imports logic from device_scanner.py and broadcasts results to HTML clients.
+Final Live Pipeline WebSocket Server (Step 6)
+Combines device scanning, raw CSI reading, and signal processing 
+into a single live JSON stream.
 """
 
 import asyncio
@@ -12,49 +13,47 @@ import datetime
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-# Import the scanning logic we built in Step 1
+# Import modules
 from device_scanner import (
     get_network_info, 
     scan_network_scapy, 
     scan_network_fallback, 
     check_admin_privileges
 )
+from csi_reader import CsiUdpProtocol, start_udp_server
+from signal_processor import CSISignalProcessor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-# Keep track of connected clients
+# Global state
 connected_clients = set()
+csi_raw_state = {}  # Holds raw CSI packets
+processor = CSISignalProcessor()
+latest_device_list = []
 
 async def register(websocket):
-    """Registers a new client connection."""
     connected_clients.add(websocket)
     log.info(f"Client connected. Total clients: {len(connected_clients)}")
 
 async def unregister(websocket):
-    """Unregisters a client connection gracefully."""
-    connected_clients.remove(websocket)
+    connected_clients.discard(websocket)
     log.info(f"Client disconnected. Total clients: {len(connected_clients)}")
 
-async def broadcast_device_list():
-    """
-    Background task that scans the network every 5 seconds and 
-    sends the results to all connected WebSocket clients.
-    """
-    log.info("Starting background device scanner loop...")
+async def device_scanner_task():
+    """Background task to continuously scan for connected devices every 5 seconds."""
+    log.info("Starting background device scanner...")
     is_admin = check_admin_privileges()
+    
+    global latest_device_list
     
     while True:
         try:
-            # 1. Get network info
             net_info = get_network_info()
-            
             if net_info.subnet_cidr == "Unknown":
-                log.error("Could not detect network subnet. Retrying in 5s...")
                 await asyncio.sleep(5)
                 continue
 
-            # 2. Perform the scan
             if is_admin:
                 try:
                     devices = scan_network_scapy(net_info.subnet_cidr)
@@ -63,47 +62,55 @@ async def broadcast_device_list():
             else:
                 devices = scan_network_fallback(net_info.subnet_cidr)
 
-            # 3. Format the data payload as JSON
-            device_list = []
-            for d in devices:
-                device_list.append({
-                    "ip": d.ip,
-                    "mac": d.mac,
-                    "name": d.hostname
-                })
+            latest_device_list = [{"ip": d.ip, "mac": d.mac, "name": d.hostname} for d in devices]
+        except Exception as e:
+            log.error(f"Scanner error: {e}")
+            
+        await asyncio.sleep(5)
 
+async def pipeline_broadcast_task():
+    """
+    Core pipeline loop running at 1Hz. 
+    Pulls raw CSI data, runs the signal processor, merges with device list,
+    and broadcasts to the frontend dashboard.
+    """
+    log.info("Starting WebSocket broadcast pipeline...")
+    
+    while True:
+        try:
+            # 1. Feed the latest raw CSI packets into the processor
+            for node_id, data in list(csi_raw_state.items()):
+                rssi = data.get('rssi', 0)
+                processor.add_data_point(node_id, rssi)
+                # clear it so we don't process stale data multiple times
+                del csi_raw_state[node_id]
+                
+            # 2. Process to get movement and zone estimates
+            processor.process()
+            
+            # 3. Construct the combined payload
             payload = {
-                "type": "device_list",
+                "type": "live_pipeline_frame",
                 "timestamp": datetime.datetime.now().isoformat(),
-                "devices": device_list
+                "devices": latest_device_list,
+                "analytics": processor.get_state()
             }
             message = json.dumps(payload)
 
-            # 4. Broadcast to all active clients
+            # 4. Broadcast
             if connected_clients:
-                # Use asyncio.gather to send to all clients concurrently
-                tasks = []
-                for client in connected_clients:
-                    tasks.append(asyncio.create_task(client.send(message)))
-                
-                # We catch exceptions internally in the handler so wait for them here
+                tasks = [asyncio.create_task(client.send(message)) for client in connected_clients]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
-                for res in results:
-                    if isinstance(res, Exception):
-                        pass # The unregister handler will clean up disconnected clients
-                        
+                # Client disconnects will be cleaned up by the handler loop
+                
         except Exception as e:
-            log.error(f"Error during scan/broadcast: {e}")
-
-        # Wait 5 seconds before scanning again
-        await asyncio.sleep(5)
+            log.error(f"Pipeline error: {e}")
+            
+        await asyncio.sleep(1) # Broadcast at 1Hz
 
 async def connection_handler(websocket, path):
-    """Handles individual client connections."""
     await register(websocket)
     try:
-        # Keep the connection open and listen for messages (even if we ignore them)
-        # This is necessary to detect client disconnects properly.
         async for message in websocket:
             pass
     except ConnectionClosed:
@@ -112,20 +119,32 @@ async def connection_handler(websocket, path):
         await unregister(websocket)
 
 async def main():
-    """Entry point: starts the WebSocket server and the broadcast loop."""
-    log.info("Starting WebSocket Server on ws://localhost:8765...")
+    """Main entry point for the entire backend."""
+    log.info("=======================================")
+    log.info(" WiFi CSI Home Sensing Backend         ")
+    log.info("=======================================")
     
-    # Start the WebSocket server on port 8765
+    # 1. Start the UDP server to listen for ESP32 broadcasts
+    udp_transport = await start_udp_server(csi_raw_state)
+    
+    # 2. Start WebSocket server for frontend
     server = await websockets.serve(connection_handler, "localhost", 8765)
+    log.info("WebSocket Server listening on ws://localhost:8765")
     
-    # Start the background broadcast loop
-    broadcast_task = asyncio.create_task(broadcast_device_list())
+    # 3. Start background loops
+    scanner_task = asyncio.create_task(device_scanner_task())
+    broadcast_task = asyncio.create_task(pipeline_broadcast_task())
     
-    # Keep the server running forever
+    # Run forever
     await server.wait_closed()
+    
+    # Cleanup
+    udp_transport.close()
+    scanner_task.cancel()
+    broadcast_task.cancel()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        log.info("Server stopped by user.")
+        log.info("Backend stopped.")
