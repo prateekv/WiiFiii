@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Device Scanner - WebSocket Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .status.connected {
+            background-color: #2e7d32;
+            color: white;
+        }
+        .status.disconnected {
+            background-color: #c62828;
+            color: white;
+        }
+        .device-card {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid #1976d2;
+        }
+        .device-info h3 {
+            margin: 0 0 5px 0;
+            color: #64b5f6;
+        }
+        .device-info p {
+            margin: 0;
+            color: #aaaaaa;
+            font-size: 14px;
+        }
+        .timestamp {
+            color: #888;
+            font-size: 12px;
+            text-align: right;
+        }
+        #empty-state {
+            text-align: center;
+            color: #888;
+            padding: 40px;
+            background-color: #2d2d2d;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Live WiFi Devices</h1>
+        <div id="connection-status" class="status disconnected">Disconnected</div>
+    </div>
+    
+    <div class="timestamp" id="last-update">Waiting for data...</div>
+    
+    <div id="device-list" style="margin-top: 20px;">
+        <div id="empty-state">No data received yet. Ensure the Python WebSocket server is running.</div>
+    </div>
+</div>
+
+<script>
+    // Configuration
+    const WS_URL = 'ws://localhost:8765';
+    
+    // DOM Elements
+    const statusEl = document.getElementById('connection-status');
+    const deviceListEl = document.getElementById('device-list');
+    const lastUpdateEl = document.getElementById('last-update');
+    
+    function updateStatus(isConnected) {
+        if (isConnected) {
+            statusEl.textContent = 'Connected (Live)';
+            statusEl.className = 'status connected';
+        } else {
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'status disconnected';
+            lastUpdateEl.textContent = 'Connection lost. Retrying...';
+        }
+    }
+    
+    function renderDevices(devices, timestamp) {
+        // Update timestamp
+        const date = new Date(timestamp);
+        lastUpdateEl.textContent = 'Last updated: ' + date.toLocaleTimeString();
+        
+        // Clear list
+        deviceListEl.innerHTML = '';
+        
+        if (!devices || devices.length === 0) {
+            deviceListEl.innerHTML = '<div id="empty-state">No devices found on the network.</div>';
+            return;
+        }
+        
+        // Render each device
+        devices.forEach(device => {
+            const card = document.createElement('div');
+            card.className = 'device-card';
+            
+            const info = document.createElement('div');
+            info.className = 'device-info';
+            
+            const name = document.createElement('h3');
+            name.textContent = device.name || 'Unknown Device';
+            
+            const details = document.createElement('p');
+            details.textContent = `IP: ${device.ip}  |  MAC: ${device.mac}`;
+            
+            info.appendChild(name);
+            info.appendChild(details);
+            card.appendChild(info);
+            
+            deviceListEl.appendChild(card);
+        });
+    }
+
+    function connect() {
+        console.log(`Connecting to ${WS_URL}...`);
+        const ws = new WebSocket(WS_URL);
+        
+        ws.onopen = () => {
+            console.log('WebSocket connected!');
+            updateStatus(true);
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'device_list' && data.devices) {
+                    renderDevices(data.devices, data.timestamp);
+                }
+            } catch (err) {
+                console.error('Error parsing WebSocket message:', err);
+            }
+        };
+        
+        ws.onclose = () => {
+            console.log('WebSocket disconnected. Retrying in 3 seconds...');
+            updateStatus(false);
+            setTimeout(connect, 3000);
+        };
+        
+        ws.onerror = (err) => {
+            console.error('WebSocket Error:', err);
+            ws.close(); // Force close to trigger the retry logic in onclose
+        };
+    }
+
+    // Start connection
+    connect();
+</script>
+
+</body>
+</html>

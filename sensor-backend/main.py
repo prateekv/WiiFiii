@@ -18,12 +18,35 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import our scanner logic and new modules
 from network_scanner import get_network_info, read_arp_cache
 from csi_reader import start_udp_server
-from ws_server import manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 # ── Global State ──────────────────────────────────────────────────────────────
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections = set()
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active_connections.add(ws)
+
+    def disconnect(self, ws: WebSocket):
+        self.active_connections.discard(ws)
+
+    async def broadcast(self, payload: dict):
+        if not self.active_connections:
+            return
+        msg = json.dumps(payload)
+        dead = set()
+        for client in self.active_connections:
+            try:
+                await client.send_text(msg)
+            except Exception:
+                dead.add(client)
+        self.active_connections -= dead
+
+manager = ConnectionManager()
 # In-memory stores for our live data
 latest_devices: list = []
 latest_csi_nodes: Dict[str, dict] = {}
