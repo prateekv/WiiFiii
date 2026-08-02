@@ -20,6 +20,9 @@
 static const char *TAG = "wifi-csi";
 static bool wifi_connected = false;
 
+static int csi_broadcast_sock = -1;
+static struct sockaddr_in csi_dest_addr;
+
 /* ── Active Traffic Generator ───────────────────────────────────────────────
  * WiFi CSI requires packets to travel through the air. Routers send beacons
  * every ~100ms, but to get a smooth live stream, we actively transmit UDP 
@@ -68,14 +71,28 @@ static void csi_rx_callback(void *ctx, wifi_csi_info_t *info)
 
     // info->mac is the sender's MAC address (usually the router)
     const uint8_t *mac = info->mac;
-    
-    // info->rx_ctrl contains metadata like RSSI (signal strength)
     int8_t rssi = info->rx_ctrl.rssi;
-    
-    // info->buf contains the raw complex numbers (I/Q) for the subcarriers
     uint16_t len = info->len;
 
-    // Print a cleanly formatted summary to the Serial Monitor
+    // Send the CSI frame over UDP broadcast
+    if (csi_broadcast_sock >= 0) {
+        // Construct a simple binary payload: 
+        // [NODE_ID (16 bytes)] [MAC (6 bytes)] [RSSI (1 byte)] [LEN (2 bytes)] [CSI_DATA (LEN bytes)]
+        // To keep it simple and easy for Python to parse as JSON string, we will just send a JSON string for now.
+        // Binary is faster, but JSON is much easier for an initial pipeline verification.
+        
+        char json_payload[1024];
+        // We only extract the first 4 bytes of CSI for the preview as requested.
+        snprintf(json_payload, sizeof(json_payload),
+                 "{\"node_id\": \"%s\", \"mac\": \"%02x:%02x:%02x:%02x:%02x:%02x\", \"rssi\": %d, \"payload_preview\": \"%02x %02x %02x %02x\"}",
+                 NODE_ID, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], rssi,
+                 info->buf[0], info->buf[1], info->buf[2], info->buf[3]);
+                 
+        sendto(csi_broadcast_sock, json_payload, strlen(json_payload), 0,
+               (struct sockaddr *)&csi_dest_addr, sizeof(csi_dest_addr));
+    }
+
+    // Also print to Serial Monitor for local debugging
     ESP_LOGI(TAG, "[CSI] MAC: %02x:%02x:%02x:%02x:%02x:%02x | RSSI: %3d dBm | Bytes: %3d | First 4 bytes: %02x %02x %02x %02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
              rssi, len,
@@ -97,6 +114,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         wifi_connected = true;
+        
+        // Initialize the CSI UDP broadcast socket
+        if (csi_broadcast_sock < 0) {
+            csi_broadcast_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+            csi_dest_addr.sin_family = AF_INET;
+            csi_dest_addr.sin_port = htons(5005);
+            csi_dest_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+        }
     }
 }
 
