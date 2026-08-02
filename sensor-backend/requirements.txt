@@ -1,0 +1,26 @@
+# ============================================================
+# WiFi CSI Sensor Backend — Python Dependencies
+# ============================================================
+# NOTE: Python 3.14 pre-built wheels for numpy/scipy are limited.
+# Install with: pip install -r requirements.txt --only-binary :all:
+# If a package is unavailable, fall back to: pip install -r requirements.txt
+#
+# ─── Web / WebSocket server ─────────────────────────────────
+fastapi>=0.115.0            # async REST + WebSocket framework
+uvicorn[standard]>=0.34.0   # ASGI server
+websockets>=14.0            # low-level WebSocket support
+
+# ─── Signal processing ──────────────────────────────────────
+# numpy: use >=2.1 — first version with CPython 3.14 free-threaded wheels
+numpy>=2.1
+scipy>=1.13
+
+# ─── CSI parsing ────────────────────────────────────────────
+csikit>=0.3.4               # parse raw ESP32/Intel/Nexmon CSI bytes
+
+# ─── Network / device discovery ─────────────────────────────
+scapy>=2.6.0                # ARP scanning — needs Npcap on Windows
+netifaces2>=0.0.21          # py3.12+ compatible fork of netifaces
+
+# ─── Utilities ──────────────────────────────────────────────
+python-dotenv>=1.0.0        # .env file loader
