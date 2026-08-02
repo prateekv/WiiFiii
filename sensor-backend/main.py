@@ -8,54 +8,25 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Set, Dict, Any
+from typing import Dict
 import time
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import our scanner logic
+# Import our scanner logic and new modules
 from network_scanner import get_network_info, read_arp_cache
+from csi_reader import start_udp_server
+from ws_server import manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 # ── Global State ──────────────────────────────────────────────────────────────
-connected_clients: Set[WebSocket] = set()
-
 # In-memory stores for our live data
 latest_devices: list = []
 latest_csi_nodes: Dict[str, dict] = {}
-
-
-# ── UDP Listener (CSI Data) ───────────────────────────────────────────────────
-class CsiUdpProtocol(asyncio.DatagramProtocol):
-    def connection_made(self, transport):
-        self.transport = transport
-        log.info("UDP Server listening on port 5005 for CSI broadcasts...")
-
-    def datagram_received(self, data, addr):
-        try:
-            payload = data.decode("utf-8")
-            csi_data = json.loads(payload)
-            node_id = csi_data.get("node_id", "unknown_node")
-            
-            # Keep track of the latest frame per node, adding a timestamp
-            csi_data["last_seen"] = time.time()
-            latest_csi_nodes[node_id] = csi_data
-        except Exception as e:
-            # Drop malformed packets silently to avoid log spam
-            pass
-
-
-async def start_udp_server():
-    loop = asyncio.get_running_loop()
-    transport, protocol = await loop.create_datagram_endpoint(
-        lambda: CsiUdpProtocol(),
-        local_addr=("0.0.0.0", 5005)
-    )
-    return transport
 
 
 # ── Background Tasks ──────────────────────────────────────────────────────────
@@ -98,7 +69,7 @@ async def pipeline_broadcast_loop():
             "csi_nodes": latest_csi_nodes
         }
         
-        await broadcast(payload)
+        await manager.broadcast(payload)
 
 
 # ── Lifespan: start background tasks on startup ───────────────────────────────
@@ -106,7 +77,7 @@ async def pipeline_broadcast_loop():
 async def lifespan(app: FastAPI):
     log.info("🚀 Sensor backend starting…")
     
-    udp_transport = await start_udp_server()
+    udp_transport = await start_udp_server(latest_csi_nodes)
     scanner_task = asyncio.create_task(device_scanner_loop())
     broadcast_task = asyncio.create_task(pipeline_broadcast_loop())
     
@@ -132,7 +103,7 @@ app.add_middleware(
 # ── REST endpoints ────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "clients": len(connected_clients)}
+    return {"status": "ok", "clients": len(manager.active_connections)}
 
 @app.get("/pipeline/state")
 async def get_pipeline_state():
@@ -145,28 +116,12 @@ async def get_pipeline_state():
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    await ws.accept()
-    connected_clients.add(ws)
-    log.info(f"Client connected. Total: {len(connected_clients)}")
+    await manager.connect(ws)
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
-        connected_clients.discard(ws)
-        log.info(f"Client disconnected. Total: {len(connected_clients)}")
-
-
-async def broadcast(payload: dict):
-    if not connected_clients:
-        return
-    msg = json.dumps(payload)
-    dead = set()
-    for client in connected_clients:
-        try:
-            await client.send_text(msg)
-        except Exception:
-            dead.add(client)
-    connected_clients -= dead
+        manager.disconnect(ws)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
